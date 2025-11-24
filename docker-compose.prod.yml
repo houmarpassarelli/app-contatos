@@ -1,0 +1,142 @@
+# Docker Compose para Produção
+# Sistema UEX - Gerenciamento de Contatos
+#
+# Uso:
+#   docker-compose -f docker-compose.prod.yml up -d
+#
+# IMPORTANTE: Configure as variáveis de ambiente antes de executar!
+services:
+  # Banco de Dados MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: uex-mysql-prod
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-uex_contacts}
+      MYSQL_USER: ${DB_USERNAME:-uex_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    ports:
+      - "3306:3306"
+    networks:
+      - uex-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=200
+      - --innodb_buffer_pool_size=1G
+
+  # Aplicação Laravel + Nginx
+  app:
+    image: uex-contacts:latest
+    container_name: uex-app-prod
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # Aplicação
+      APP_NAME: "UEX Contatos"
+      APP_ENV: production
+      APP_KEY: ${APP_KEY}
+      APP_DEBUG: "false"
+      APP_URL: ${APP_URL:-https://your-domain.com}
+
+      # Banco de Dados
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: ${DB_DATABASE:-uex_contacts}
+      DB_USERNAME: ${DB_USERNAME:-uex_user}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      # APIs Externas
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+      VIACEP_URL: https://viacep.com.br/ws
+
+      # Frontend
+      FRONTEND_URL: ${FRONTEND_URL:-https://your-domain.com}
+
+      # Email (configure conforme seu provedor)
+      MAIL_MAILER: ${MAIL_MAILER:-smtp}
+      MAIL_HOST: ${MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_ENCRYPTION: ${MAIL_ENCRYPTION:-tls}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@your-domain.com}
+      MAIL_FROM_NAME: "UEX Contatos"
+
+      # Cache & Sessions
+      CACHE_STORE: file
+      SESSION_DRIVER: cookie
+      SESSION_LIFETIME: 120
+
+      # Queue
+      QUEUE_CONNECTION: database
+
+      # Logs
+      LOG_CHANNEL: stack
+      LOG_LEVEL: warning
+
+      # Sanctum
+      SANCTUM_STATEFUL_DOMAINS: ${FRONTEND_URL:-https://your-domain.com}
+    volumes:
+      # Persistir storage (uploads, logs, cache)
+      - app_storage:/var/www/html/storage
+      - app_logs:/var/log
+    ports:
+      - "${APP_PORT:-80}:80"
+    networks:
+      - uex-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Redis (opcional, para cache e sessions)
+  # Descomente se desejar usar Redis
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: uex-redis-prod
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   networks:
+  #     - uex-network
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 3
+  #   command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+networks:
+  uex-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
+  app_storage:
+    driver: local
+  app_logs:
+    driver: local
+  # redis_data:
+  #   driver: local
